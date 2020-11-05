@@ -1,74 +1,134 @@
-var syntax = 'sass'
+// VARIABLES & PATHS
 
-var gulp = require('gulp'),
-	sass = require('gulp-sass'),
-	browserSync = require('browser-sync'),
-	uglify = require('gulp-uglify'),
-	concat = require('gulp-concat'),
-	cleancss = require('gulp-clean-css'),
-	rename = require('gulp-rename'),
-	autoprefixer = require('gulp-autoprefixer'),
-	notify = require('gulp-notify'),
-	newer = require('gulp-newer')
+let preprocessor = 'sass',
+	fileswatch = 'html,htm,txt,json,md,woff2', // List of files extensions for watching & hard reload (comma separated)
+	imageswatch = 'jpg,jpeg,png,webp,svg', // List of images extensions for watching & compression (comma separated)
+	baseDir = 'assets', // Base directory path without «/» at the end
+	online = true // If «false» - Browsersync will work offline without internet connection
 
-// Local Server
-gulp.task('browser-sync', function() {
-	browserSync({
-		proxy: 'xyzexclusive/',
+let paths = {
+	scripts: {
+		src: [
+			// 'node_modules/jquery/dist/jquery.min.js', // npm vendor example (npm i --save-dev jquery)
+			baseDir + '/js/app.js', // app.js. Always at the end
+		],
+		dest: baseDir + '/js',
+	},
+
+	styles: {
+		// src: baseDir + '/' + preprocessor + '/main.*',
+		src: baseDir + '/' + 'css' + '/main.*',
+		dest: baseDir + '/css',
+	},
+
+	images: {
+		src: baseDir + '/images/src/**/*',
+		dest: baseDir + '/images/dest',
+	},
+
+	deploy: {
+		hostname: 'username@yousite.com', // Deploy hostname
+		destination: 'yousite/public_html/', // Deploy destination
+		include: [
+			/* '*.htaccess' */
+		], // Included files to deploy
+		exclude: ['**/Thumbs.db', '**/*.DS_Store'], // Excluded files from deploy
+	},
+
+	cssOutputName: 'app.min.css',
+	jsOutputName: 'app.min.js',
+}
+
+// LOGIC
+
+const { src, dest, parallel, series, watch } = require('gulp')
+const sass = require('gulp-sass')
+const cleancss = require('gulp-clean-css')
+const concat = require('gulp-concat')
+const browserSync = require('browser-sync').create()
+const uglify = require('gulp-uglify-es').default
+const autoprefixer = require('gulp-autoprefixer')
+const imagemin = require('gulp-imagemin')
+const newer = require('gulp-newer')
+const rsync = require('gulp-rsync')
+const del = require('del')
+
+function browsersync() {
+	browserSync.init({
+		// server: { baseDir: baseDir + '/' },
 		notify: false,
+		online: online,
+		port: 8081,
 		files: ['./**/*.php'],
-		port: 8081
-		// open: false,
-		// online: false, // Work Offline Without Internet Connection
-		// tunnel: true, tunnel: "projectname", // Demonstration page: http://projectname.localtunnel.me
+		proxy: 'delta-teh',
 	})
-})
+}
 
-// Sass|Scss Styles
-gulp.task('styles', function() {
-	return gulp
-		.src('assets/css/**/*.' + syntax + '')
-		.pipe(sass({ outputStyle: 'expanded' }).on('error', notify.onError()))
-		.pipe(rename({ suffix: '.min', prefix: '' }))
-		.pipe(autoprefixer(['last 15 versions']))
-		.pipe(cleancss({ level: { 1: { specialComments: 0 } } })) // Opt., comment out when debugging
-		.pipe(gulp.dest('assets/css'))
+function scripts() {
+	return src(paths.scripts.src)
+		.pipe(concat(paths.jsOutputName))
+		.pipe(uglify())
+		.pipe(dest(paths.scripts.dest))
 		.pipe(browserSync.stream())
-})
+}
 
-// JS
-gulp.task('scripts', function() {
-	return (
-		gulp
-			.src([
-				'assets/libs/jquery/jquery.min.js',
-				'assets/libs/youtube/yt.js',
-				'assets/libs/slick/slick.min.js',
-				'assets/js/common.js' // Always at the end
-			])
-			.pipe(concat('scripts.min.js'))
-			// .pipe(uglify()) // Mifify js (opt.)
-			.pipe(gulp.dest('assets/js'))
-			.pipe(browserSync.reload({ stream: true }))
+function styles() {
+	return src(paths.styles.src)
+		.pipe(eval(preprocessor)())
+		.pipe(concat(paths.cssOutputName))
+		.pipe(autoprefixer({ overrideBrowserslist: ['last 10 versions'], grid: true }))
+		.pipe(cleancss({ level: { 1: { specialComments: 0 } } /* format: 'beautify' */ }))
+		.pipe(dest(paths.styles.dest))
+		.pipe(browserSync.stream())
+}
+
+function images() {
+	return src(paths.images.src)
+		.pipe(newer(paths.images.dest))
+		.pipe(imagemin())
+		.pipe(dest(paths.images.dest))
+}
+
+function cleanimg() {
+	return del('' + paths.images.dest + '/**/*', { force: true })
+}
+
+function deploy() {
+	return src(baseDir + '/').pipe(
+		rsync({
+			root: baseDir + '/',
+			hostname: paths.deploy.hostname,
+			destination: paths.deploy.destination,
+			include: paths.deploy.include,
+			exclude: paths.deploy.exclude,
+			recursive: true,
+			archive: true,
+			silent: false,
+			compress: true,
+		})
 	)
-})
+}
 
-// HTML Live Reload
-gulp.task('code', function() {
-	return gulp
-		.src('./**/*.php')
-		.pipe(newer('./'))
-		.pipe(gulp.dest('./'))
-		.pipe(browserSync.reload({ stream: true }))
-})
+function startwatch() {
+	// watch(baseDir + '/' + preprocessor + '/**/*', { usePolling: true }, styles)
+	watch(baseDir + '/' + 'css' + '/**/*', { usePolling: true }, styles)
+	watch(baseDir + '/images/src/**/*.{' + imageswatch + '}', { usePolling: true }, images)
+	watch(baseDir + '/**/*.{' + fileswatch + '}', { usePolling: true }).on(
+		'change',
+		browserSync.reload
+	)
+	watch(
+		[baseDir + '/js/**/*.js', '!' + paths.scripts.dest + '/*.min.js'],
+		{ usePolling: true },
+		scripts
+	)
+}
 
-gulp.task('watch', function() {
-	gulp.watch('assets/css/**/*.' + syntax + '', gulp.parallel('styles'))
-	gulp.watch(['libs/**/*.js', 'assets/js/common.js'], gulp.parallel('scripts'))
-	gulp.watch('./**/*.php', gulp.parallel('code'))
-})
-
-gulp.task(
-	'default',
-	gulp.parallel('styles', 'scripts', 'browser-sync', 'watch')
-)
+exports.browsersync = browsersync
+exports.assets = series(cleanimg, styles, scripts, images)
+exports.styles = styles
+exports.scripts = scripts
+exports.images = images
+exports.cleanimg = cleanimg
+exports.deploy = deploy
+exports.default = parallel(images, styles, scripts, browsersync, startwatch)
